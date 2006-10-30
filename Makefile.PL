@@ -9,5 +9,5 @@ WriteMakefile
                                 Inline => 0.44,
                           }, 
         ABSTRACT_FROM  => 'lib/Class/CompiledC.pm', 
-        AUTHOR         => 'blackhat.blade <blade@focusline.de>')),
+        AUTHOR         => 'blackhat.blade <blade@focusline.de>',
 );

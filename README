@@ -1,11 +1,11 @@
-Class-CompiledC version 2.20
+Class-CompiledC version 2.22
 ============================
 
 Class::CompiledC let's you implement your Objects as C structs, 
 with type checking accessor methods.
 
 
-Version 2.20 is the first public release of this module, and you better treat
+Version 2.20 was the first public release of this module, and you better treat
 the version number as $VERSION -= 2.19. I have been using this code for long
 time, it's has proven to be stable (for me, on a limited number of platforms, so
 it is very likely that you will encounter things i never saw)

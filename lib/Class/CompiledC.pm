@@ -16,12 +16,12 @@ use Exporter qw/import/;
 
 =head1 VERSION
 
-This document describes version 2.20 of Class::CompiledC,
-released Thu Oct 26 21:48:10 CEST 2006 @866 /Internet Time/
+This document describes version 2.21 of Class::CompiledC,
+released Fri Oct 27 23:28:06 CEST 2006 @936 /Internet Time/
 
 =cut
 
-our $VERSION = 2.20;
+our $VERSION = 2.21;
 our %includes;
 our %funcs;
 our %extfuncs;
@@ -30,6 +30,8 @@ our %scheduled;
 our %types;
 our %EXPORT_TAGS;
 our @EXPORT_OK;
+our $re_ft;
+our $re_ft_isa;
 
 sub __circumPrint($$$);
 sub __include;
@@ -40,6 +42,12 @@ sub __coderef($);
 sub __fetchSymbolName($);
 sub __promoteFieldTypeToMacro($);
 sub __parseFieldType;
+
+
+$re_ft     = qr/^(?:\s*)(int|float|number|string|ref|arrayref|hashref|
+                         coderef|object|regexpref|any|uint)(?:\s*)/xi;
+
+$re_ft_isa = qr/^(?:\s*)isa(?:\s*)\((?:\s*)([\w:]*)(?:\s*)\)(?:\s*)/i;
 
 =head1 ABSTRACT
 
@@ -95,10 +103,10 @@ field called 'foo' and it's accesor method, also called 'foo' If you want to add
 a constraint to the field just name the type as a parameter for the attribute eg
 C<sub foo : Field(Ref)>.
 
-(1) I<(actually, Class::CompiledC utilizes L<Inline> to do the dirty work; L<Inline>
-uses L<Inline::C> to do it's job and L<Inline::C> employes your C compiler to
-compile the code. This means you need Inline Inline::C and a working C compiler
-on the runtime machine.>
+(1) I<(actually, Class::CompiledC utilizes L<Inline> to do the dirty work;
+L<Inline> uses L<Inline::C> to do it's job and L<Inline::C> employes your C
+compiler to compile the code. This means you need Inline Inline::C and a working
+C compiler on the runtime machine.>
 
 (2) I<C<attributes> perl6 calls them traits or properties; see L<attributes> not
 to confuse with instance variables (fields) which are sometimes also called
@@ -206,12 +214,181 @@ the always legal undefined value).
 
 Field types are case insensitve. If a type expects a parameter, as the C<Isa>
 type, then it should be enclosed in parenthises. Whitespace is always ingnored,
-around, Field types and parameters, if any. Note, however that the field type
+around Field types and parameters, if any. Note, however that the field type
 Int, spelled in lowercase letters will be misparsed as the `int` operator, so be
 careful.
 
+=head2 Additional Features
+
+Currently there are two categories of additional features: those going to stay,
+and those going to be relocated into distinct packages.
+
+First the stuff that will stay:
+
+=head3 parseArgs method
+
+Every subclass inherits this method. Its purpose is to ease the use of named
+parameters in constructors. It takes a list of key => value pairs. Foreach pair
+it calls a method named like the key with value as it only parameter (beside the
+object, of course), i.e:
+
+  $obj->parseArgs(foo => [], bar => 'bar is better than foo');
+
+Would result in the following method calls:
+
+  $obj->foo([]);
+  $obj->bar('bar is better than foo');
+
+The method also strips a leading dash ('-') from the method name, in case you
+prefer named arguments starting with a dash, therefore the following calls are
+equivalent :
+
+  $obj->parseArgs(-foo => 123, -bar => 456); # dashed style
+
+  $obj->parseArgs(foo => 123, bar => 456);   # dashless style
+
+  $obj->parseArgs(-foo => 123, bar => 456);  # no style
+
+Since this method needs key => value pairs it will croak if you supply it an odd
+number of arguments. I<actually it croaks on an even number of arguments, if you
+also count the object. but the check for oddnes is done after the object is
+shifted from the argument list>
+
+C<parseArgs> returns the object.
+
+=head3 new method
+
+Every subclass inherits this method, it is merely a wrapper around the real
+constructor (which is called 'create'). It first constructs the object (with the
+help of the real constructor) and then calls parseArgs on it. This means the
+following code is equivalent :
+
+  my $obj = class->new(-foo => 'bar');
+
+  #----
+
+  my $obj = class->create;
+  $obj->parseArgs(-foo => 'bar');
+
+Only shorter ;)
+
+=head3 inspect method
+
+This method is created for each subclass. It returns a hashref with the field
+names and their types. A short example should clarify what I try to say:
+
+  package SomeClass;
+  use base qw/Class::CompiledC/;
+
+  sub foo : Field(Int);
+  sub bar : Filed(Hashref);
+
+  #### at same time in some other package:
+
+  use SomeClass;
+  use Data::Dumper;
+
+  my $obj = Somelass->new;
+
+  print Dumper($obj->inspect);
+
+  ### prints something like
+
+  $VAR1 = {
+                'foo' => 'Int',
+                'bar' => 'Hashref',
+          }
+
+Be aware that this purely informational. Even you can change the data behind
+this reference, nothing will happen. The changes will not persist, if you call
+C<inspect> again, the output will be the same. Especially do not expect that you
+can change a class on the fly with that hash, this won't work. You should also
+know that two calls to inspect will result in two distinct hash references, so
+don't try to compare those references. Even the hash those references refer to
+is diffrent, if you really want to compare than you have to do a deep compare.
+
+=head3 the C attribute
+
+The C attribute allows you to write a subroutine in C, eg:
+
+  sub add : C(int, int a, int b)
+  {q{
+        return a + b;
+  }}
+
+The return type and the parameters are specified in the attribute, and
+the function body is in the subroutine body. Therefore the resulting C code
+looks like:
+
+  int add(int a, int b)
+  {
+          return a + b;
+  }
+
+You may have noticed that the actual body of the C function is whatever the
+(Perl subroutine returned, so this code :
+
+  sub getCompileTime(int, )
+  {
+          my $time = time;
+          my $code = "return $time";
+
+          return $code;
+  }
+
+will result in this C code :
+
+  int getCompileTime()
+  {
+          return 1162140297;
+  }
+
+The time value, is subject of change, of course. If you wonder what perl can do
+with c intergers, all (with a few exceptions) C code is subject to XS-fication
+by the L<Inline::C module>, which handles this sort of crap behind the scenes.
+You should have a look at L<Inline::C> for bugs and deficiencies, but do
+yourself and the author of Inline a favor and not report any bugs that might
+showup in conjunction with Class::CompiledC to the author of Inline, report them
+to me. I'm cheating with Inline, and most problems you might encounter wouldn't
+show up by using Inline correctly.
+
+Be advised that you have full access to perls internals within your C code and
+to take any usage out of this feature you should read the following documents:
+
+=over
+
+=item L<perlxstut>
+
+Perl XS tutorial
+
+=item L<perlxs>
+
+Perl XS application programming interface
+
+=item L<perlclib>
+
+Internal replacements for standard C library functions
+
+=item L<perlguts>
+
+Perl internal functions for those doing extensions
+
+=item L<perlcall>
+
+Perl calling conventions from C
+
+=back
+
+
+XXX The stuff that will be outsourced is not yet documented.
+
+Of course, you should also know how to code in C. One final notice: This feature
+has been proven as an endless source of fun and coredumps.
 
 =head2 Methods
+
+The methods listed here are not considered part of the public api, and should
+not be used in any way, unless you know better.
 
 Class::CompiledC defines the following methods:
 
@@ -830,6 +1007,9 @@ sub new
 
 =head2 Subroutines
 
+The subroutines listed here are not considered part of the public api, and
+should not be used in any way, unless you know better.
+
 Class::CompiledC defines the following subroutines
 
 =head3 __circumPrint
@@ -943,6 +1123,7 @@ sub __coderef($)
   Prototype: $
 
 Returns the Symbol name from the glob reference GLOBREF.
+Croaks if GLOBREF acutally isn't a glob reference.
 
 =cut
 
@@ -992,24 +1173,24 @@ subroutine.
 
 sub __parseFieldType
 {
-        local $_ = shift;
+      local $_ = shift;
 
-        if (/^(?:\s*)(int|float|number|string|ref|arrayref|hashref|
-              coderef|object|regexpref|any|uint)(?:\s*)/xi)
-        {
-               # warn sprintf "yeah %s !", __promoteFieldTypeToMacro $1;
-                return __promoteFieldTypeToMacro($1);
-        }
-        elsif (/^(?:\s*)isa(?:\s*)\((?:\s*)([\w:]*)(?:\s*)\)(?:\s*)/i)
-        {
-                croak "fail0r: isa type needs a classname argument\n" unless $1;
-                return '__CHECK(__ISA(__ARG0, '."\"$1\"), \"__ISA\")";
+      if (/$re_ft/)
+      {
+             # warn sprintf "yeah %s !", __promoteFieldTypeToMacro $1;
+              return __promoteFieldTypeToMacro($1);
+      }
+      elsif (/$re_ft_isa/)
+      {
+              croak "fail0r: isa type needs a classname argument\n" unless $1;
+              return '__CHECK(__ISA(__ARG0, '."\"$1\"), \"__ISA\")";
 
-        }
-        else
-        {
-                croak "fail0r: bad type specified $_\n";
-        }
+      }
+      else
+      {
+              croak "fail0r: bad type specified $_\n";
+      }
+
 }
 
 
@@ -1270,25 +1451,18 @@ sub Class : ATTR(CODE, CHECK)
         my $data;
         my $ref;
         my $name;
-        
+
         $package   = shift || croak "no package supplied";
         $symbol    = shift || croak "no symbol supplied";
         $ref       = shift || croak "no reference supplied";
         $attribute = shift || croak "no attribute supplied";
         $data      = shift;
-        
+
         $name      = __fetchSymbolName $symbol;
-        
+
         $data ? eval "use $data" : eval "use ${package}::Method::${name}";
-        #die $symbol;
-        #*$symbol = bless $ref, ($data || "${package}::Method::${name}");
         bless *{$symbol}{CODE}, ($data || "${package}::Method::${name}");
-        
-         #Devel::LexAlias
-        
-        #my $vars = ;
-        
-        #print "lol , ", *{$symbol}{CODE};
+
         return;
 }
 
@@ -1547,8 +1721,8 @@ Random thought: lexical importing ? what a cute idea! is this possible?
 
 blackhat.blade
  The Hive
- 
-blade@focusline.de 
+
+blade@focusline.de
 
 =head1 COPYRIGHT
 
@@ -1585,6 +1759,11 @@ __END__
       fly, we are not at this point, and we're not going into this directon)
 2.20 Thu Oct 26 21:48:22 CEST 2006 @866 /Internet Time/
      first public release
-     renamed to Class::CompiledC to avoid the creation of a new root namespace 
-     added version requirement for 5.8.7, sorry for this but i cannot tell if 
+     renamed to Class::CompiledC to avoid the creation of a new root namespace
+     added version requirement for 5.8.7, sorry for this but I cannot tell if
      it will run with earlier versions.
+2.21 Fri Oct 27 23:27:38 CEST 2006 @935 /Internet Time/
+     no code changes, fixed errors in Makefile.pl
+2.22 Sun Oct 29 22:52:42 CET 2006 @953 /Internet Time/
+     updated documentation,
+     minor code cleanups.

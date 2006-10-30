@@ -8,6 +8,7 @@ use Test::More tests => 234;
 use Scalar::Util qw'dualvar';
 use strict;
 use warnings;
+no warnings qw'prototype';
 
 use_ok('Class::CompiledC');
 
